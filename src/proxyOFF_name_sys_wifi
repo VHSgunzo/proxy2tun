@@ -1,0 +1,22 @@
+#!/bin/bash
+cd "$( dirname "${BASH_SOURCE[0]}")"
+set -x
+
+bad_tun=$(sed '7!d' variables.conf)
+remote_ip=$(sed '2!d' variables.conf)
+
+id="$RANDOM"
+dist=$(cat /tmp/dist)
+gateway=$(ip r | awk '/default/{print $3}')
+sudo ip route del $remote_ip/32 via $gateway
+sudo ip route del 0.0.0.0/1 via 10.9.3.17
+sudo ip route del 128.0.0.0/1 via 10.9.3.17
+sudo ip route del 10.9.0.1/32 via 10.9.3.17
+sudo ip addr del dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip -4 addr flush label $bad_tun
+sudo ip tuntap del dev $bad_tun mode tun
+sudo mv /etc/NetworkManager/NetworkManager.old /etc/NetworkManager/NetworkManager.conf
+nm_pid=$(sudo pidof NetworkManager)
+sudo kill -HUP $nm_pid
+
+xfce4-terminal --geometry=62x24 --hide-scrollbar --hide-toolbar --hide-borders --working-directory=$dist -e "./nameOFF_Wi-Fi"

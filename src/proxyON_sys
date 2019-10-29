@@ -1,0 +1,29 @@
+#!/bin/bash
+cd "$( dirname "${BASH_SOURCE[0]}")"
+set -x
+
+remote_ip=$(sed '2!d' variables.conf)
+remote_port=$(sed '3!d' variables.conf)
+bad_tun=$(sed '7!d' variables.conf)
+login=$(sed '4!d' variables.conf)
+pass=$(sed '5!d' variables.conf)
+
+
+id="$RANDOM"
+gateway=$(ip r | awk '/default/{print $3}')
+remote_server="$remote_ip:$remote_port"
+log_pass="--username $login --password $pass"
+pwd | cat > /tmp/dist
+dist=$(cat /tmp/dist)
+sudo iptables-save > /tmp/iptables.conf
+sudo ip tuntap add dev $bad_tun mode tun
+sudo ip link set $bad_tun up
+sudo ip link set dev $bad_tun up mtu 1500
+sudo ip addr add 10.0.0.1/30 dev $bad_tun
+sudo ip addr add dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip route add $remote_ip/32 via $gateway
+sudo ip route add 0.0.0.0/1 via 10.9.3.17
+sudo ip route add 128.0.0.0/1 via 10.9.3.17
+sudo ip route add 10.9.0.1/32 via 10.9.3.17
+
+sudo ./badvpn-tun2socks --tundev $bad_tun --netif-ipaddr 10.0.0.2 --netif-netmask 255.255.255.0 --socks-server-addr $remote_server $log_pass

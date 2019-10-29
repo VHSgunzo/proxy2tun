@@ -1,0 +1,47 @@
+#!/bin/bash
+
+set -x
+
+NS=$(sed '8!d' variables.conf)
+VETH=$(sed '9!d' variables.conf)
+VPEER=$(sed '10!d' variables.conf)
+VETH_ADDR=$(sed '11!d' variables.conf)
+VPEER_ADDR=$(sed '12!d' variables.conf)
+
+
+dns=$(sed '1!d' /tmp/tty)
+namespace=$(sed '2!d' /tmp/tty)
+
+dns_pid=$(ps -ft pts/$dns | awk 'NR==6{print$2}')
+sudo kill -2 $dns_pid
+
+sudo ./ttyecho -n /dev/pts/$dns exit
+sudo ./ttyecho -n /dev/pts/$dns exit
+sudo ./ttyecho -n /dev/pts/$namespace exit
+sudo ./ttyecho -n /dev/pts/$namespace exit
+
+# Remove link iface
+sudo ip netns exec $NS ip route del default via $VETH_ADDR
+sudo ip netns exec $NS ip addr del $VPEER_ADDR/24 dev $VPEER
+sudo ip netns exec $NS ip link set $VPEER down
+sudo ip netns exec $NS ip link set $VPEER netns 1
+sudo ip link set $VETH down
+sudo ip link del $VETH type veth peer name $VPEER
+sudo ip -4 addr flush label $VPEER
+sudo ip -4 addr flush label $VETH
+sudo ip netns exec $NS ip link set lo down
+
+# Remove namespace
+sudo ip -all netns delete
+
+# Disable IP-forwarding.
+sudo sysctl -w net.ipv4.ip_forward=0
+
+sudo iptables -F
+sudo iptables -X
+sudo iptables -t nat -F
+sudo iptables -t nat -X
+sudo iptables-restore < /tmp/iptables.conf
+
+# Remove trash
+rm -r /tmp/tty /tmp/dist /tmp/iptables.conf /tmp/ttyold /tmp/ttynew

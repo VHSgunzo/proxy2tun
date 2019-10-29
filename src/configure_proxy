@@ -1,0 +1,33 @@
+#!/bin/bash
+cd "$( dirname "${BASH_SOURCE[0]}")"
+
+read -p "Enter Proxy IP (89.243.157.254) > " remote_ip
+sed -i "2c\*$remote_ip*" variables.conf
+
+read -p "Enter Proxy port (1080) > " remote_port
+sed -i "3c\*$remote_port*" variables.conf
+
+read -p "Proxy with login pass? (y/n) > " proxy_logpass
+
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]]; 
+then read -p "Enter Proxy login (user) > " login
+	sed -i "4c\*$login*" variables.conf
+	read -p "Enter Proxy password (pass) > " pass
+	sed -i "5c\*$pass*" variables.conf
+	sudo sed -i '15c\log_pass=\"--username $login --password $pass\"'  proxyON_sys
+	sudo sed -i '15c\log_pass=\"--username $login --password $pass\"' proxyON_name
+	sudo sed -i '15c\log_pass=\"--username $login --password $pass\"' proxyON_name_sys
+	sudo sed -i '15c\log_pass=\"--username $login --password $pass\"' proxyON_name_wifi
+	sudo sed -i '15c\log_pass=\"--username $login --password $pass\"' proxyON_name_sys_wifi
+
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then sed -i "4c\ " variables.conf
+	sed -i "5c\ " variables.conf
+	sudo sed -i '15c\log_pass=' proxyON_sys
+	sudo sed -i '15c\log_pass=' proxyON_name
+	sudo sed -i '15c\log_pass=' proxyON_name_sys
+	sudo sed -i '15c\log_pass=' proxyON_name_wifi
+	sudo sed -i '15c\log_pass=' proxyON_name_sys_wifi
+fi
+
+cat variables.conf | tr -d '*' > variables.new && mv variables.new variables.conf
