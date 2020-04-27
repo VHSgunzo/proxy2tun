@@ -5,6 +5,8 @@
 * Easy setup
 * Automatic installation of dependencies and DNSCrypt-Proxy
 * Support PROXY with password and passwordless
+* Wi-Fi access point settings
+* Сhange mac address wifi access points
 * PROXY for the whole system
 * Creates a namespace for PROXY
 * PROXY for the whole system and namespace
