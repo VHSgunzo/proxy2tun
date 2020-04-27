@@ -5,7 +5,7 @@ export RED='\033[1;91m'
 
 title="$RED 		Hi BRO!) it's proxy2tun \n"
 prompt=
-options=("Install dependency" "Configure all" "Configure only Wi-Fi" "Configure only Proxy" "Proxy->System" "Proxy->namespace" "Proxy->System->namespace" "Proxy->namespace->Wi-Fi" "Proxy->System->namespace->Wi-Fi")
+options=("Proxy->System" "Proxy->namespace" "Proxy->System->namespace" "Proxy->namespace->Wi-Fi" "Proxy->System->namespace->Wi-Fi" "Settings")
 
 clear
 echo -e -n  "$title"
@@ -15,58 +15,43 @@ select opt in "${options[@]}" "Quit"; do
     case "$REPLY" in
 
     1 ) clear
-		echo -e -n "$BLUE Installing dependency \n"
-		src/dependency_installer 
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-    2 ) clear
-		echo -e -n "$BLUE Configure all \n"
-		src/configure_all 
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-    3 ) clear
-		echo -e -n "$BLUE Configure only Wi-Fi \n"
-		src/configure_wifi 
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-    4 ) clear
-		echo -e -n "$BLUE Configure only Proxy \n"
-		src/configure_proxy
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-    5 ) clear
 		echo -e -n "$BLUE Proxy->System \n"
 		src/proxyON_sys
 		clear
 		src/proxyOFF_sys
 		clear
 		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-	6 ) clear
+	2 ) clear
 		echo -e -n "$BLUE Proxy->namespace \n"
 		src/proxyON_name
 		clear
 		src/proxyOFF_name
 		clear
 		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-	7 ) clear
+	3 ) clear
 		echo -e -n "$BLUE Proxy->System->namespace \n"
 		src/proxyON_name_sys
 		clear
 		src/proxyOFF_name_sys
 		clear
 		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-	8 ) clear
+	4 ) clear
 		echo -e -n "$BLUE Proxy->namespace->Wi-Fi \n"
 		src/proxyON_name_wifi 
 		clear
 		src/proxyOFF_name_wifi
 		clear
 		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-	9 ) clear
+	5 ) clear
 		echo -e -n "$BLUE Proxy->System->namespace->Wi-Fi \n"
 		src/proxyON_name_sys_wifi 
 		clear
 		src/proxyOFF_name_sys_wifi 
+		clear
+		echo -e -n  "$RED Press ENTER to continue \n";continue;;
+    6 ) clear
+		echo -e -n "$BLUE Settings \n"
+		src/settings
 		clear
 		echo -e -n  "$RED Press ENTER to continue \n";continue;;
 
