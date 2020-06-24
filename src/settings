@@ -102,6 +102,13 @@ sleep 2
 }
 
 function configure_all {
+if [ -d proxy ]; 
+then
+clear
+else
+mkdir proxy
+clear
+fi
 touch sys.conf/variables.conf
 while true; do
 read -p "Proxy IP (18.19.45.78) > " remote_ip
