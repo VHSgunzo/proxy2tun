@@ -2,62 +2,487 @@
 cd "$( dirname "${BASH_SOURCE[0]}")"
 export BLUE='\033[1;94m'
 export RED='\033[1;91m'
+export RESETCOLOR='\033[1;00m'
 
-title="$RED 		Hi BRO!) it's proxy2tun \n"
+function proxyON_sys {
+remote_ip=$(sed '1!d' src/sys.conf/variables.conf)
+remote_port=$(sed '2!d' src/sys.conf/variables.conf)
+login=$(sed '3!d' src/sys.conf/variables.conf)
+pass=$(sed '4!d' src/sys.conf/variables.conf)
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+gateway=$(ip r | awk '/default/{print $3}')
+remote_server="$remote_ip:$remote_port"
+if ! [ -z $login ]
+then
+log_pass="--username $login --password $pass"
+else
+log_pass=
+fi
+sudo iptables-save > /tmp/iptables.conf
+sudo ip tuntap add dev $bad_tun mode tun
+sudo ip link set $bad_tun up
+sudo ip link set dev $bad_tun up mtu 1500
+sudo ip addr add 10.0.0.1/30 dev $bad_tun
+sudo ip addr add dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip route add $remote_ip via $gateway
+sudo ip route add 0.0.0.0/1 via 10.9.3.17
+sudo ip route add 128.0.0.0/1 via 10.9.3.17
+sudo ip route add 10.9.0.1 via 10.9.3.17
+sudo src/badvpn --tundev $bad_tun --netif-ipaddr 10.0.0.2 --netif-netmask 255.255.255.0 --socks-server-addr $remote_server $log_pass
+}
+
+function proxyOFF_sys {
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+remote_ip=$(sed '1!d' src/sys.conf/variables.conf)
+gateway=$(ip r | awk '/default/{print $3}')
+sudo ip route del $remote_ip via $gateway
+sudo ip route del 0.0.0.0/1 via 10.9.3.17
+sudo ip route del 128.0.0.0/1 via 10.9.3.17
+sudo ip route del 10.9.0.1 via 10.9.3.17
+sudo ip addr del dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip -4 addr flush label $bad_tun
+sudo ip tuntap del dev $bad_tun mode tun
+sudo iptables -P INPUT ACCEPT
+sudo iptables -P FORWARD ACCEPT
+sudo iptables -P OUTPUT ACCEPT
+sudo iptables -t nat -F
+sudo iptables -t nat -X
+sudo iptables -t mangle -F
+sudo iptables -F
+sudo iptables -X
+sudo iptables-restore < /tmp/iptables.conf
+sudo rm -r /tmp/iptables.conf
+}
+
+function nameON {
+NS=$(sed '8!d' src/sys.conf/variables.conf)
+VETH=$(sed '6!d' src/sys.conf/variables.conf)
+VPEER=$(sed '9!d' src/sys.conf/variables.conf)
+VETH_ADDR=10.200.1.1
+VPEER_ADDR=10.200.1.2
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+sudo ip netns add $NS
+sudo ip link add ${VETH} type veth peer name ${VPEER}
+sudo ip link set ${VPEER} netns $NS
+sudo ip addr add ${VETH_ADDR}/24 dev ${VETH}
+sudo ip link set ${VETH} up
+sudo ip netns exec $NS ip addr add ${VPEER_ADDR}/24 dev ${VPEER}
+sudo ip netns exec $NS ip link set ${VPEER} up
+sudo ip netns exec $NS ip link set lo up
+sudo ip netns exec $NS ip route add default via ${VETH_ADDR}
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo iptables -t nat -A POSTROUTING -s ${VPEER_ADDR}/24 -o $bad_tun -j MASQUERADE
+sudo iptables -A FORWARD -i $bad_tun -o ${VETH} -j ACCEPT
+sudo iptables -A FORWARD -o $bad_tun -i ${VETH} -j ACCEPT
+ls /dev/pts/ | cat > /tmp/ttyold && xfce4-terminal --title=DNSCRYPT --geometry=62x24 --hide-scrollbar --hide-toolbar && xfce4-terminal --title=NAMESPACE --geometry=62x24 --hide-scrollbar --hide-toolbar && ls /dev/pts/ | cat > /tmp/ttynew && grep -vf /tmp/ttyold /tmp/ttynew | sort -u > /tmp/tty
+dns=$(sed '1!d' /tmp/tty)
+namespace=$(sed '2!d' /tmp/tty)
+sudo src/ttyecho -n /dev/pts/$dns "sudo ip netns exec $NS sudo -u $USER -i"
+sudo src/ttyecho -n /dev/pts/$namespace "sudo ip netns exec $NS sudo -u $USER -i"
+sudo src/ttyecho -n /dev/pts/$dns sudo dnscrypt-proxy
+}
+
+function nameOFF {
+NS=$(sed '8!d' src/sys.conf/variables.conf)
+VETH=$(sed '6!d' src/sys.conf/variables.conf)
+VPEER=$(sed '9!d' src/sys.conf/variables.conf)
+VETH_ADDR=10.200.1.1
+VPEER_ADDR=10.200.1.2
+dns=$(sed '1!d' /tmp/tty)
+namespace=$(sed '2!d' /tmp/tty)
+dns_pid=$(ps -ft pts/$dns | awk 'NR==6{print$2}')
+sudo kill -2 $dns_pid
+sudo src/ttyecho -n /dev/pts/$dns exit
+sudo src/ttyecho -n /dev/pts/$dns exit
+sudo src/ttyecho -n /dev/pts/$namespace exit
+sudo src/ttyecho -n /dev/pts/$namespace exit
+sudo ip netns exec $NS ip route del default via $VETH_ADDR
+sudo ip netns exec $NS ip addr del $VPEER_ADDR/24 dev $VPEER
+sudo ip netns exec $NS ip link set $VPEER down
+sudo ip netns exec $NS ip link set $VPEER netns 1
+sudo ip link set $VETH down
+sudo ip link del $VETH type veth peer name $VPEER
+sudo ip -4 addr flush label $VPEER
+sudo ip -4 addr flush label $VETH
+sudo ip netns exec $NS ip link set lo down
+sudo ip -all netns delete
+sudo sysctl -w net.ipv4.ip_forward=0
+sudo iptables -P INPUT ACCEPT
+sudo iptables -P FORWARD ACCEPT
+sudo iptables -P OUTPUT ACCEPT
+sudo iptables -t nat -F
+sudo iptables -t nat -X
+sudo iptables -t mangle -F
+sudo iptables -F
+sudo iptables -X
+sudo iptables-restore < /tmp/iptables.conf
+rm -r /tmp/tty /tmp/iptables.conf /tmp/ttyold /tmp/ttynew
+}
+
+function nameON_Wi-Fi {
+NS=$(sed '8!d' src/sys.conf/variables.conf)
+VETH=$(sed '6!d' src/sys.conf/variables.conf)
+VPEER=$(sed '9!d' src/sys.conf/variables.conf)
+VETH_ADDR=10.200.1.1
+VPEER_ADDR=10.200.1.2
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+wifi_phy=$(cat /tmp/wifi_phy)
+sudo ip netns add $NS
+sudo ip link add ${VETH} type veth peer name ${VPEER}
+sudo ip link set ${VPEER} netns $NS
+sudo ip addr add ${VETH_ADDR}/24 dev ${VETH}
+sudo ip link set ${VETH} up
+sudo ip netns exec $NS ip addr add ${VPEER_ADDR}/24 dev ${VPEER}
+sudo ip netns exec $NS ip link set ${VPEER} up
+sudo ip netns exec $NS ip link set lo up
+sudo ip netns exec $NS ip route add default via ${VETH_ADDR}
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo iptables -t nat -A POSTROUTING -s ${VPEER_ADDR}/24 -o $bad_tun -j MASQUERADE
+sudo iptables -A FORWARD -i $bad_tun -o ${VETH} -j ACCEPT
+sudo iptables -A FORWARD -o $bad_tun -i ${VETH} -j ACCEPT
+sudo iw phy $wifi_phy set netns name $NS
+ls /dev/pts/ | cat > /tmp/ttyold && xfce4-terminal --title=DNSCRYPT --geometry=62x24 --hide-scrollbar --hide-toolbar && xfce4-terminal --title=HOTSPOT --geometry=62x24 --hide-scrollbar --hide-toolbar && ls /dev/pts/ | cat > /tmp/ttynew && grep -vf /tmp/ttyold /tmp/ttynew | sort -u > /tmp/tty
+dns=$(sed '1!d' /tmp/tty)
+hotspot=$(sed '2!d' /tmp/tty)
+sudo src/ttyecho -n /dev/pts/$dns "sudo ip netns exec $NS sudo -u $USER -i"
+sudo src/ttyecho -n /dev/pts/$hotspot "sudo ip netns exec $NS sudo -u $USER -i"
+sudo src/ttyecho -n /dev/pts/$dns sudo dnscrypt-proxy
+sleep 2
+sudo src/ttyecho -n /dev/pts/$hotspot $(pwd)/src/hotspot
+}
+
+function nameOFF_Wi-Fi {
+NS=$(sed '8!d' src/sys.conf/variables.conf)
+VETH=$(sed '6!d' src/sys.conf/variables.conf)
+VPEER=$(sed '9!d' src/sys.conf/variables.conf)
+VETH_ADDR=10.200.1.1
+VPEER_ADDR=10.200.1.2
+wifi_iface=$(sed '10!d' src/sys.conf/variables.conf)
+wifi_phy=$(cat /tmp/wifi_phy)
+dns=$(sed '1!d' /tmp/tty)
+hotspot=$(sed '2!d' /tmp/tty)
+dns_pid=$(ps -ft pts/$dns | awk 'NR==6{print$2}')
+sudo kill -2 $dns_pid
+sudo src/create_ap --stop $wifi_iface
+sudo src/ttyecho -n /dev/pts/$dns exit
+sudo src/ttyecho -n /dev/pts/$dns exit
+sudo src/ttyecho -n /dev/pts/$hotspot exit
+sudo src/ttyecho -n /dev/pts/$hotspot exit
+sudo ip netns exec $NS iw phy $wifi_phy set netns 1
+sudo ip netns exec $NS ip route del default via $VETH_ADDR
+sudo ip netns exec $NS ip addr del $VPEER_ADDR/24 dev $VPEER
+sudo ip netns exec $NS ip link set $VPEER down
+sudo ip netns exec $NS ip link set $VPEER netns 1
+sudo ip link set $VETH down
+sudo ip link del $VETH type veth peer name $VPEER
+sudo ip -4 addr flush label $VPEER
+sudo ip -4 addr flush label $VETH
+sudo ip netns exec $NS ip link set lo down
+sudo ip -all netns delete
+sudo sysctl -w net.ipv4.ip_forward=0
+sudo iptables -P INPUT ACCEPT
+sudo iptables -P FORWARD ACCEPT
+sudo iptables -P OUTPUT ACCEPT
+sudo iptables -t nat -F
+sudo iptables -t nat -X
+sudo iptables -t mangle -F
+sudo iptables -F
+sudo iptables -X
+sudo iptables-restore < /tmp/iptables.conf
+rm -r /tmp/tty /tmp/iptables.conf /tmp/wifi_phy /tmp/ttyold /tmp/ttynew
+}
+
+function proxyON_name {
+remote_ip=$(sed '1!d' src/sys.conf/variables.conf)
+remote_port=$(sed '2!d' src/sys.conf/variables.conf)
+bind_iface=$(sed '6!d' src/sys.conf/variables.conf)
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+login=$(sed '3!d' src/sys.conf/variables.conf)
+pass=$(sed '4!d' src/sys.conf/variables.conf)
+id="$RANDOM"
+remote_server="$remote_ip:$remote_port"
+if ! [ -z $login ]
+then
+log_pass="--username $login --password $pass"
+else
+log_pass=
+fi
+sudo iptables-save > /tmp/iptables.conf
+sudo ip tuntap add dev $bad_tun mode tun
+sudo ip link set $bad_tun up
+sudo ip link set dev $bad_tun up mtu 1500
+sudo ip addr add 10.0.0.1/30 dev $bad_tun
+sudo ip addr add dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip route add 10.9.0.1 via 10.9.3.17
+sudo sysctl -w net.ipv4.conf.$bad_tun.forwarding=1
+sudo ip rule add fwmark $id lookup $id
+sudo ip route add default via 10.0.0.2 table $id
+sudo iptables -t mangle -I PREROUTING -i $bind_iface -p tcp -j MARK --set-mark $id
+nameON
+sudo src/badvpn --tundev $bad_tun --netif-ipaddr 10.0.0.2 --netif-netmask 255.255.255.0 --socks-server-addr $remote_server $log_pass
+}
+
+function proxyOFF_name {
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+sudo ip route del 10.9.0.1 via 10.9.3.17
+sudo ip addr del dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip -4 addr flush label $bad_tun
+sudo ip tuntap del dev $bad_tun mode tun
+nameOFF
+}
+
+function proxyON_name_sys {
+remote_ip=$(sed '1!d' src/sys.conf/variables.conf)
+remote_port=$(sed '2!d' src/sys.conf/variables.conf)
+bind_iface=$(sed '6!d' src/sys.conf/variables.conf)
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+login=$(sed '3!d' src/sys.conf/variables.conf)
+pass=$(sed '4!d' src/sys.conf/variables.conf)
+id="$RANDOM"
+gateway=$(ip r | awk '/default/{print $3}')
+if ! [ -z $login ]
+then
+log_pass="--username $login --password $pass"
+else
+log_pass=
+fi
+remote_server="$remote_ip:$remote_port"
+sudo iptables-save > /tmp/iptables.conf
+sudo ip tuntap add dev $bad_tun mode tun
+sudo ip link set $bad_tun up
+sudo ip link set dev $bad_tun up mtu 1500
+sudo ip addr add 10.0.0.1/30 dev $bad_tun
+sudo ip addr add dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip route add $remote_ip/32 via $gateway
+sudo ip route add 0.0.0.0/1 via 10.9.3.17
+sudo ip route add 128.0.0.0/1 via 10.9.3.17
+sudo ip route add 10.9.0.1 via 10.9.3.17
+sudo sysctl -w net.ipv4.conf.$bad_tun.forwarding=1
+sudo ip rule add fwmark $id lookup $id
+sudo ip route add default via 10.0.0.2 table $id
+sudo iptables -t mangle -I PREROUTING -i $bind_iface -p tcp -j MARK --set-mark $id
+nameON
+sudo src/badvpn --tundev $bad_tun --netif-ipaddr 10.0.0.2 --netif-netmask 255.255.255.0 --socks-server-addr $remote_server $log_pass
+}
+
+function proxyOFF_name_sys {
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+remote_ip=$(sed '1!d' src/sys.conf/variables.conf)
+gateway=$(ip r | awk '/default/{print $3}')
+sudo ip route del $remote_ip via $gateway
+sudo ip route del 0.0.0.0/1 via 10.9.3.17
+sudo ip route del 128.0.0.0/1 via 10.9.3.17
+sudo ip route del 10.9.0.1 via 10.9.3.17
+sudo ip addr del dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip -4 addr flush label $bad_tun
+sudo ip tuntap del dev $bad_tun mode tun
+nameOFF
+}
+
+function proxyON_name_wifi {
+remote_ip=$(sed '1!d' src/sys.conf/variables.conf)
+remote_port=$(sed '2!d' src/sys.conf/variables.conf)
+bind_iface=$(sed '6!d' src/sys.conf/variables.conf)
+wifi_iface=$(sed '10!d' src/sys.conf/variables.conf)
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+login=$(sed '3!d' src/sys.conf/variables.conf)
+pass=$(sed '4!d' src/sys.conf/variables.conf)
+id="$RANDOM"
+if ! [ -z $login ]
+then
+log_pass="--username $login --password $pass"
+else
+log_pass=
+fi
+gateway=$(ip r | awk '/default/{print $3}')
+remote_server="$remote_ip:$remote_port"
+cat /sys/class/net/$wifi_iface/phy80211/name > /tmp/wifi_phy
+sudo iptables-save > /tmp/iptables.conf
+sudo mv -f /etc/NetworkManager/NetworkManager.conf /etc/NetworkManager/NetworkManager.old
+sudo sed -i 15c\unmanaged-devices=interface-name:$wifi_iface src/sys.conf/NetworkManager.conf
+sudo cp -f src/sys.conf/NetworkManager.conf /etc/NetworkManager/NetworkManager.conf
+sudo kill -HUP $(sudo pidof NetworkManager)
+sudo ip tuntap add dev $bad_tun mode tun
+sudo ip link set $bad_tun up
+sudo ip link set dev $bad_tun up mtu 1500
+sudo ip addr add 10.0.0.1/30 dev $bad_tun
+sudo ip addr add dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip route add 10.9.0.1 via 10.9.3.17
+sudo sysctl -w net.ipv4.conf.$bad_tun.forwarding=1
+sudo ip rule add fwmark $id lookup $id
+sudo ip route add default via 10.0.0.2 table $id
+sudo iptables -t mangle -I PREROUTING -i $bind_iface -p tcp -j MARK --set-mark $id
+nameON_Wi-Fi
+sudo src/badvpn --tundev $bad_tun --netif-ipaddr 10.0.0.2 --netif-netmask 255.255.255.0 --socks-server-addr $remote_server $log_pass
+}
+
+function proxyOFF_name_wifi {
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+sudo ip route del 10.9.0.1 via 10.9.3.17
+sudo ip addr del dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip -4 addr flush label $bad_tun
+sudo ip tuntap del dev $bad_tun mode tun
+sudo mv -f /etc/NetworkManager/NetworkManager.old /etc/NetworkManager/NetworkManager.conf
+sudo kill -HUP $(sudo pidof NetworkManager)
+nameOFF_Wi-Fi
+}
+
+function proxyON_name_sys_wifi {
+remote_ip=$(sed '1!d' src/sys.conf/variables.conf)
+remote_port=$(sed '2!d' src/sys.conf/variables.conf)
+bind_iface=$(sed '6!d' src/sys.conf/variables.conf)
+wifi_iface=$(sed '10!d' src/sys.conf/variables.conf)
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+login=$(sed '3!d' src/sys.conf/variables.conf)
+pass=$(sed '4!d' src/sys.conf/variables.conf)
+id="$RANDOM"
+if ! [ -z $login ]
+then
+log_pass="--username $login --password $pass"
+else
+log_pass=
+fi
+gateway=$(ip r | awk '/default/{print $3}')
+remote_server="$remote_ip:$remote_port"
+cat /sys/class/net/$wifi_iface/phy80211/name > /tmp/wifi_phy
+sudo iptables-save > /tmp/iptables.conf
+sudo mv -f /etc/NetworkManager/NetworkManager.conf /etc/NetworkManager/NetworkManager.old
+sudo sed -i 15c\unmanaged-devices=interface-name:$wifi_iface src/sys.conf/NetworkManager.conf
+sudo cp -f src/sys.conf/NetworkManager.conf /etc/NetworkManager/NetworkManager.conf
+sudo kill -HUP $(sudo pidof NetworkManager)
+sudo ip tuntap add dev $bad_tun mode tun
+sudo ip link set $bad_tun up
+sudo ip link set dev $bad_tun up mtu 1500
+sudo ip addr add 10.0.0.1/30 dev $bad_tun
+sudo ip addr add dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip route add $remote_ip via $gateway
+sudo ip route add 0.0.0.0/1 via 10.9.3.17
+sudo ip route add 128.0.0.0/1 via 10.9.3.17
+sudo ip route add 10.9.0.1 via 10.9.3.17
+sudo sysctl -w net.ipv4.conf.$bad_tun.forwarding=1
+sudo ip rule add fwmark $id lookup $id
+sudo ip route add default via 10.0.0.2 table $id
+sudo iptables -t mangle -I PREROUTING -i $bind_iface -p tcp -j MARK --set-mark $id
+nameON_Wi-Fi
+sudo src/badvpn --tundev $bad_tun --netif-ipaddr 10.0.0.2 --netif-netmask 255.255.255.0 --socks-server-addr $remote_server $log_pass
+}
+
+function proxyOFF_name_sys_wifi {
+bad_tun=$(sed '7!d' src/sys.conf/variables.conf)
+remote_ip=$(sed '1!d' src/sys.conf/variables.conf)
+gateway=$(ip r | awk '/default/{print $3}')
+sudo ip route del $remote_ip via $gateway
+sudo ip route del 0.0.0.0/1 via 10.9.3.17
+sudo ip route del 128.0.0.0/1 via 10.9.3.17
+sudo ip route del 10.9.0.1 via 10.9.3.17
+sudo ip addr del dev $bad_tun local 10.9.3.18 peer 10.9.3.17
+sudo ip -4 addr flush label $bad_tun
+sudo ip tuntap del dev $bad_tun mode tun
+sudo mv -f /etc/NetworkManager/NetworkManager.old /etc/NetworkManager/NetworkManager.conf
+sudo kill -HUP $(sudo pidof NetworkManager)
+nameOFF_Wi-Fi
+}
+
+function proxy_menu {
+num_prox=$(ls -ltr src/proxy|awk '{print$9}'|wc -l)
+sed -i 's/.*Proxy succesfully set.*/ /' src/proxy_list
+for (( m=2; m <= $num_prox; m++ )); do
+    remote_ip=$(sed '1!d' src/proxy/$(ls -ltr src/proxy|awk '{print$9}'|awk "(NR == $m)"))
+    remote_port=$(sed '2!d' src/proxy/$(ls -ltr src/proxy|awk '{print$9}'|awk "(NR == $m)"))
+    login=$(sed '3!d' src/proxy/$(ls -ltr src/proxy|awk '{print$9}'|awk "(NR == $m)"))
+    pass=$(sed '4!d' src/proxy/$(ls -ltr src/proxy|awk '{print$9}'|awk "(NR == $m)"))
+    pub_ip=$(sed '5!d' src/proxy/$(ls -ltr src/proxy|awk '{print$9}'|awk "(NR == $m)"))
+    num_var=$(($m-1))
+    var_str=$(echo "$num_var ) clear; sed -i "\"1c\\\\$remote_ip"\" sys.conf/variables.conf; sed -i "\"2c\\\\$remote_port"\" sys.conf/variables.conf; sed -i "\"3c\\\\$login"\" sys.conf/variables.conf; sed -i "\"4c\\\\$pass"\" sys.conf/variables.conf; sed -i "\"5c\\\\$pub_ip"\" sys.conf/variables.conf; echo -en  "\"\$RED  Proxy succesfully set \\\\n"\"; sleep 0.5; clear; opt_menu;continue;;")
+    n=$(($num_var+19))
+    sed_c=${n}c
+    sed -i "${sed_c}\\\\$var_str" src/proxy_list
+done
+}
+
+function opt_menu {
+echo -en "$RED                 PROXY2TUN \n"
+echo -en "${RED}1) Proxy->System \n"
+echo -en "${RED}2) Proxy->namespace \n"
+echo -en "${RED}3) Proxy->System->namespace \n"
+echo -en "${RED}4) Proxy->namespace->Wi-Fi \n"
+echo -en "${RED}5) Proxy->System->namespace->Wi-Fi \n"
+echo -en "${RED}6) Proxy List \n"
+echo -en "${RED}7) Settings \n"
+echo -en "${RED}$(( ${#options[@]}+1 ))) Quit \n"
+}
+
+title="$RED                 PROXY2TUN \n"
 prompt=
-options=("Proxy->System" "Proxy->namespace" "Proxy->System->namespace" "Proxy->namespace->Wi-Fi" "Proxy->System->namespace->Wi-Fi" "Settings")
-
+options=("Proxy->System" "Proxy->namespace" "Proxy->System->namespace" "Proxy->namespace->Wi-Fi" "Proxy->System->namespace->Wi-Fi" "Proxy List" "Settings")
 clear
 echo -e -n  "$title"
 PS3="$prompt "
 select opt in "${options[@]}" "Quit"; do 
-
     case "$REPLY" in
-
     1 ) clear
-		echo -e -n "$BLUE Proxy->System \n"
-		src/proxyON_sys
-		clear
-		src/proxyOFF_sys
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-	2 ) clear
-		echo -e -n "$BLUE Proxy->namespace \n"
-		src/proxyON_name
-		clear
-		src/proxyOFF_name
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-	3 ) clear
-		echo -e -n "$BLUE Proxy->System->namespace \n"
-		src/proxyON_name_sys
-		clear
-		src/proxyOFF_name_sys
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-	4 ) clear
-		echo -e -n "$BLUE Proxy->namespace->Wi-Fi \n"
-		src/proxyON_name_wifi 
-		clear
-		src/proxyOFF_name_wifi
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-	5 ) clear
-		echo -e -n "$BLUE Proxy->System->namespace->Wi-Fi \n"
-		src/proxyON_name_sys_wifi 
-		clear
-		src/proxyOFF_name_sys_wifi 
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
+        cp -f ~/.bash_history ~/.bash_history.back
+        echo -e -n "$BLUE Proxy->System \n"
+        proxyON_sys
+        clear
+        proxyOFF_sys
+        mv -f ~/.bash_history.back ~/.bash_history
+        clear
+        opt_menu;continue;;
+    2 ) clear
+        cp -f ~/.bash_history ~/.bash_history.back
+        echo -e -n "$BLUE Proxy->namespace \n"
+        proxyON_name
+        clear
+        proxyOFF_name
+        mv -f ~/.bash_history.back ~/.bash_history
+        clear
+        opt_menu;continue;;
+    3 ) clear
+        cp -f ~/.bash_history ~/.bash_history.back
+        echo -e -n "$BLUE Proxy->System->namespace \n"
+        proxyON_name_sys
+        clear
+        proxyOFF_name_sys
+        mv -f ~/.bash_history.back ~/.bash_history
+        clear
+        opt_menu;continue;;
+    4 ) clear
+        cp -f ~/.bash_history ~/.bash_history.back
+        echo -e -n "$BLUE Proxy->namespace->Wi-Fi \n"
+        proxyON_name_wifi
+        clear
+        proxyOFF_name_wifi
+        mv -f ~/.bash_history.back ~/.bash_history
+        clear
+        opt_menu;continue;;
+    5 ) clear
+        cp -f ~/.bash_history ~/.bash_history.back
+        echo -e -n "$BLUE Proxy->System->namespace->Wi-Fi \n"
+        proxyON_name_sys_wifi
+        clear
+        proxyOFF_name_sys_wifi
+        mv -f ~/.bash_history.back ~/.bash_history
+        clear
+        opt_menu;continue;;
     6 ) clear
-		echo -e -n "$BLUE Settings \n"
-		src/settings
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
-
-    $(( ${#options[@]}+1 )) ) clear; break;;
+        cp -f ~/.bash_history ~/.bash_history.back
+        proxy_menu
+        clear
+        echo -e -n "$BLUE Proxy List \n"
+        src/proxy_list
+        mv -f ~/.bash_history.back ~/.bash_history
+        clear
+        opt_menu;continue;;
+    7 ) clear
+        cp -f ~/.bash_history ~/.bash_history.back
+        echo -e -n "$BLUE Settings \n"
+        src/settings
+        mv -f ~/.bash_history.back ~/.bash_history
+        clear
+        opt_menu;continue;;
+        $(( ${#options[@]}+1 )) ) clear; break;;
     *) echo -e -n  "$RED Invalid option. Try another one. \n";continue;;
-
     esac
-
 done
+echo -e $RESETCOLOR

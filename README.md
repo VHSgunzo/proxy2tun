@@ -7,6 +7,8 @@
 * Support PROXY with password and passwordless
 * Wi-Fi access point settings
 * Сhange mac address Wi-Fi access points
+* Proxy List
+* Proxy checker
 * PROXY for the whole system
 * Creates a namespace for PROXY
 * PROXY for the whole system and namespace
@@ -26,13 +28,13 @@ git clone https://github.com/VHSgunzo/proxy2tun.git
 ```
 cd proxy2tun
 ```
-* **Run ssh2tun**
+* **Run proxy2tun**
 ```
 ./proxy2tun
 ```
 * Select the "Settings" item in the script menu
 * Fix SUDO passwordless
 * Install the necessary dependencies
-* Configure script
-* **Run this script from xfce4-terminal (will be installed along with the rest of the dependencies)**
+* Configure and close script
+* **Open any terminal and type proxy2tun**
 * Use it

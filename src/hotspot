@@ -1,0 +1,16 @@
+#!/bin/bash
+cd "$( dirname "${BASH_SOURCE[0]}")"
+set -x
+VPEER=$(sed '9!d' sys.conf/variables.conf)
+wifi_iface=$(sed '10!d' sys.conf/variables.conf)
+wifi_name=$(sed '11!d' sys.conf/variables.conf)
+wifi_pass=$(sed '12!d' sys.conf/variables.conf)
+wifi_cha=$(sed '13!d' sys.conf/variables.conf)
+wifi_mac=$(sed '14!d' sys.conf/variables.conf)
+hot_hidd=$(sed '15!d' sys.conf/variables.conf)
+if ! [ -z $hot_hidd ];
+then
+sudo ./create_ap $wifi_iface $VPEER $wifi_name $wifi_pass -c $wifi_cha --mac $wifi_mac --no-virt --hidden
+else
+sudo ./create_ap $wifi_iface $VPEER $wifi_name $wifi_pass -c $wifi_cha --mac $wifi_mac --no-virt
+fi

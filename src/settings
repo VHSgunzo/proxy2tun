@@ -2,47 +2,926 @@
 cd "$( dirname "${BASH_SOURCE[0]}")"
 export BLUE='\033[1;94m'
 export RED='\033[1;91m'
+export RESETCOLOR='\033[1;00m'
+function fix_sudo {
+sudo deluser $USER sudo
+echo "$USER ALL=NOPASSWD:ALL" | sudo su -c 'cat >> /etc/sudoers'
+}
 
-title="$RED 		WoW it's Settings \n"
+function dns_install {
+LATEST_URL="https://api.github.com/repos/jedisct1/dnscrypt-proxy/releases/latest"
+INSTALL_DIR=/opt/dnscrypt-proxy
+workdir=/tmp/dnscrypt
+dns_ver=$(dnscrypt-proxy -version|grep -o "2.0")
+if [ "$dns_ver" == "2.0" ]; 
+then
+    echo "DNSCrypt installed!"
+else
+    rmersion=$(curl -sL "$LATEST_URL" | grep "tag_name" | head -1 | cut -d \" -f 4)
+    echo "Install DNSCrypt version $rmersion"
+    sudo mkdir $INSTALL_DIR
+    mkdir $workdir
+    curl -sL $(curl -sL "$LATEST_URL" | grep dnscrypt-proxy-linux_x86_64- | grep browser_download_url | head -1 | cut -d \" -f 4) | tar xz -C "$workdir" -f -
+    sudo mv -f ${workdir}/linux-x86_64/* ${INSTALL_DIR}/
+    sudo cp -rf sys.conf/dnscrypt-proxy.toml ${INSTALL_DIR}/
+    sudo chattr -i /etc/resolv.conf
+    sudo systemctl stop systemd-resolved
+    sudo systemctl mask systemd-resolved
+    sudo apt remove --purge resolvconf -y
+    sudo mv -f /etc/resolv.conf /etc/resolv.conf.back
+    sudo cp -rf sys.conf/resolv.conf /etc/
+    sudo chattr +i /etc/resolv.conf
+    sudo $INSTALL_DIR/dnscrypt-proxy -service install
+    sudo ln -sf $INSTALL_DIR/dnscrypt-proxy /bin/
+    sudo systemctl enable dnscrypt-proxy
+    sudo $INSTALL_DIR/dnscrypt-proxy -service start
+    sudo rm -rf $workdir
+    sleep 5
+fi
+}
+
+function dns_update {
+INSTALL_DIR=/opt/dnscrypt-proxy
+LATEST_URL="https://api.github.com/repos/jedisct1/dnscrypt-proxy/releases/latest"
+workdir=/tmp/dnscrypt
+dns_ver=$(dnscrypt-proxy -version|grep -o "2.0")
+if [ "$dns_ver" == "2.0" ]; 
+then
+lversion=$("${INSTALL_DIR}/dnscrypt-proxy" -version)
+rmersion=$(curl -sL "$LATEST_URL" | grep "tag_name" | head -1 | cut -d \" -f 4)
+echo locally installed
+echo "$lversion"
+echo remote git version
+echo "$rmersion"
+    if [ "$rmersion" != "$lversion" ]; 
+    then
+    echo "Update DNSCrypt to version $rmersion"
+    mkdir $workdir
+    curl -sL $(curl -sL "$LATEST_URL" | grep dnscrypt-proxy-linux_x86_64- | grep browser_download_url | head -1 | cut -d \" -f 4) | tar xz -C "$workdir" -f - 
+    sudo $INSTALL_DIR/dnscrypt-proxy -service stop
+    sudo killall -9 dnscrypt-proxy
+    sudo systemctl disable dnscrypt-proxy
+    sudo $INSTALL_DIR/dnscrypt-proxy -service uninstall
+    sudo rm -rf $INSTALL_DIR/*
+    sudo mv -f ${workdir}/linux-x86_64/* ${INSTALL_DIR}/
+    sudo cp -rf sys.conf/dnscrypt-proxy.toml ${INSTALL_DIR}/
+    sudo $INSTALL_DIR/dnscrypt-proxy -service install
+    sudo systemctl enable dnscrypt-proxy
+    sudo $INSTALL_DIR/dnscrypt-proxy -service start
+    sudo rm -rf $workdir
+    sleep 5
+    else
+    echo "No Update Needed"
+    fi
+else
+    echo "DNSCrypt not installed!"
+    dns_install
+fi
+}
+
+function install_dependency {
+read -p "DNSCrypt (y - update / n - install) > " dnscrypt
+if [[ ! $dnscrypt =~ ^[Nn]$ ]]; 
+then dns_update
+elif [[ ! $dnscrypt =~ ^[Yy]$ ]];
+then dns_install
+fi
+sudo apt update; sudo apt install bash util-linux procps hostapd iproute2 iw haveged dnsmasq iptables xfce4-terminal net-tools proxychains4 macchanger -y
+clear
+echo -e -n "$BLUE Create symblink to /bin"
+dir_script=$(pwd | rev | cut -c 5- | rev)
+cat <<EOF > /tmp/dir_script
+#!/bin/bash
+xfce4-terminal --title=PROXY2TUN -e "$dir_script/proxy2tun" --geometry=42x10
+EOF
+sudo mv -f /tmp/dir_script /bin/proxy2tun
+sudo chmod +x /bin/proxy2tun
+clear
+echo -e -n "$RED            PROXY2TUN INSTALLED"
+sleep 2
+}
+
+function configure_all {
+touch sys.conf/variables.conf
+while true; do
+read -p "Proxy IP (18.19.45.78) > " remote_ip
+if ! [ -z $remote_ip ];
+then
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Proxy port (1080) > " remote_port
+if ! [ -z $remote_port ];
+then
+clear
+break
+else
+clear
+continue
+fi
+done
+read -p "Proxy with login:pass? (y/n) > " proxy_logpass
+clear
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]];
+then
+while true; do
+read -p "Proxy login (user) > " login
+if ! [ -z $login ];
+then
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Proxy pass (pass) > " pass
+if ! [ -z $pass ];
+then
+clear
+break
+else
+clear
+continue
+fi
+done
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then
+echo " "
+fi
+clear
+read -p "Save Proxy (y/n) > " proxy_save
+clear
+if [[ ! $proxy_save =~ ^[Nn]$ ]]; 
+then read -p "Proxy name (prox0) > " proxy_name
+if ! [ -z $proxy_name ];
+then
+touch proxy/$proxy_name
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]]; 
+then
+sed -i "5c\socks5 $remote_ip $remote_port $login $pass" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $proxy_name ALIVE"
+cat <<EOF > proxy/$proxy_name
+$remote_ip
+$remote_port
+$login
+$pass
+$pub_ip
+EOF
+echo $remote_ip | cat > sys.conf/variables.conf
+echo $remote_port | cat >> sys.conf/variables.conf
+echo $login | cat >> sys.conf/variables.conf
+echo $pass | cat >> sys.conf/variables.conf
+echo $pub_ip | cat >> sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $proxy_name DEAD"
+echo " "| cat > sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+rm -f proxy/$proxy_name
+sleep 2
+fi
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then
+sed -i "5c\socks4 $remote_ip $remote_port" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $proxy_name ALIVE"
+cat <<EOF > proxy/$proxy_name
+$remote_ip
+$remote_port
+ 
+ 
+$pub_ip
+EOF
+echo $remote_ip | cat > sys.conf/variables.conf
+echo $remote_port | cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo $pub_ip | cat >> sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $proxy_name DEAD"
+echo " "| cat > sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+rm -f proxy/$proxy_name
+sleep 2
+fi
+fi
+else
+touch proxy/$remote_ip
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]]; 
+then
+sed -i "5c\socks5 $remote_ip $remote_port $login $pass" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $remote_ip ALIVE"
+cat <<EOF > proxy/$remote_ip
+$remote_ip
+$remote_port
+$login
+$pass
+$pub_ip
+EOF
+echo $remote_ip | cat > sys.conf/variables.conf
+echo $remote_port | cat >> sys.conf/variables.conf
+echo $login | cat >> sys.conf/variables.conf
+echo $pass | cat >> sys.conf/variables.conf
+echo $pub_ip | cat >> sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $remote_ip DEAD"
+echo " "| cat > sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+rm -f proxy/$remote_ip
+sleep 2
+fi
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then
+sed -i "5c\socks4 $remote_ip $remote_port" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $remote_ip ALIVE"
+cat <<EOF > proxy/$remote_ip
+$remote_ip
+$remote_port
+ 
+ 
+$pub_ip
+EOF
+echo $remote_ip | cat > sys.conf/variables.conf
+echo $remote_port | cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo $pub_ip | cat >> sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $remote_ip DEAD"
+echo " "| cat > sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+rm -f proxy/$remote_ip
+sleep 2
+fi
+fi
+fi
+elif [[ ! $proxy_save =~ ^[Yy]$ ]];
+then
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]]; 
+then
+sed -i "5c\socks5 $remote_ip $remote_port $login $pass" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $remote_ip ALIVE"
+echo $remote_ip | cat > sys.conf/variables.conf
+echo $remote_port | cat >> sys.conf/variables.conf
+echo $login | cat >> sys.conf/variables.conf
+echo $pass | cat >> sys.conf/variables.conf
+echo $pub_ip | cat >> sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $remote_ip DEAD"
+echo " "| cat > sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+sleep 2
+fi
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then
+sed -i "5c\socks4 $remote_ip $remote_port" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $remote_ip ALIVE"
+echo $remote_ip | cat > sys.conf/variables.conf
+echo $remote_port | cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo $pub_ip | cat >> sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $remote_ip DEAD"
+echo " "| cat > sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+echo " "| cat >> sys.conf/variables.conf
+sleep 2
+fi
+fi
+fi
+clear
+while true; do
+read -p "Namespace bind iface (veth1) > " bind_iface
+if ! [ -z $bind_iface ];
+then
+echo $bind_iface | cat >> sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "BADVPN iface (tun1337) > " bad_tun
+if ! [ -z $bad_tun ];
+then
+echo $bad_tun | cat >> sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Name for namespace (ns1) > " NS
+if ! [ -z $bad_tun ];
+then
+echo $NS | cat >> sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Name for iface in $NS (peth0) > " VPEER
+if ! [ -z $VPEER ];
+then
+echo $VPEER | cat >> sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+iwconfig|grep -w 802.11|awk '{print$1}'|awk '{printf "%s ",$0}'|cat > /tmp/wi_iface
+clear
+wi_iface=$(cat /tmp/wi_iface)
+read -p "Wi-Fi iface ( $wi_iface) > " wifi_iface
+if ! [ -z $wifi_iface ];
+then
+echo $wifi_iface | cat >> sys.conf/variables.conf
+rm -f /tmp/wi_iface
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Hotspot name (Spot) > " wifi_name
+if ! [ -z $wifi_name ];
+then
+echo $wifi_name | cat >> sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Hotspot pass (12345678) > " wifi_pass
+if ! [ -z $wifi_pass ];
+then
+echo $wifi_pass | cat >> sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Hotspot channel (1-11) > " wifi_cha
+if ! [ -z $wifi_cha ];
+then
+echo $wifi_cha | cat >> sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+read -p "Hotspot MAC (y-random / n-manual) > " wifi_mac
+clear
+if [[ ! $wifi_mac =~ ^[Nn]$ ]]; 
+then
+wifi_iface=$(sed '10!d' sys.conf/variables.conf)
+sudo ifconfig $wifi_iface down
+sudo macchanger -r $wifi_iface
+sudo ifconfig $wifi_iface up
+new_mac=$(macchanger -s $wifi_iface|grep Current|awk '{print$3}')
+echo $new_mac | cat >> sys.conf/variables.conf
+clear
+elif [[ ! $wifi_mac =~ ^[Yy]$ ]]; 
+then 
+while true; do
+read -p "Hotspot MAC > " new_mac
+if ! [ -z $new_mac ];
+then
+echo $new_mac | cat >> sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+fi
+read -p "Make Hotspot hidden (y/n) > " hot_hidd
+clear
+if [[ ! $hot_hidd =~ ^[Nn]$ ]]; 
+then
+echo "hidden" | cat >> sys.conf/variables.conf
+elif [[ ! $hot_hidd =~ ^[Yy]$ ]]; 
+then 
+echo " " | cat >> sys.conf/variables.conf
+fi
+}
+
+function configure_wifi {
+while true; do
+iwconfig|grep -w 802.11|awk '{print$1}'|awk '{printf "%s ",$0}'|cat > /tmp/wi_iface
+clear
+wi_iface=$(cat /tmp/wi_iface)
+read -p "Wi-Fi iface ( $wi_iface) > " wifi_iface
+if ! [ -z $wifi_iface ];
+then
+sed -i "10c\\$wifi_iface" sys.conf/variables.conf
+rm -f /tmp/wi_iface
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Hotspot name (Spot) > " wifi_name
+if ! [ -z $wifi_name ];
+then
+sed -i "11c\\$wifi_name" sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Hotspot pass (12345678) > " wifi_pass
+if ! [ -z $wifi_pass ];
+then
+sed -i "12c\\$wifi_pass" sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Hotspot channel (1-11) > " wifi_cha
+if ! [ -z $wifi_cha ];
+then
+sed -i "13c\\$wifi_cha" sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+read -p "Hotspot MAC (y-random / n-manual) > " wifi_mac
+clear
+if [[ ! $wifi_mac =~ ^[Nn]$ ]]; 
+then
+wifi_iface=$(sed '10!d' sys.conf/variables.conf)
+sudo ifconfig $wifi_iface down
+sudo macchanger -r $wifi_iface
+sudo ifconfig $wifi_iface up
+new_mac=$(macchanger -s $wifi_iface|grep Current|awk '{print$3}')
+sed -i "14c\\$new_mac" sys.conf/variables.conf
+clear
+elif [[ ! $wifi_mac =~ ^[Yy]$ ]]; 
+then 
+while true; do
+read -p "Hotspot MAC > " new_mac
+if ! [ -z $new_mac ];
+then
+sed -i "14c\\$new_mac" sys.conf/variables.conf
+clear
+break
+else
+clear
+continue
+fi
+done
+fi
+read -p "Make Hotspot hidden (y/n) > " hot_hidd
+clear
+if [[ ! $hot_hidd =~ ^[Nn]$ ]]; 
+then
+sed -i "15c\hidden" sys.conf/variables.conf
+elif [[ ! $hot_hidd =~ ^[Yy]$ ]]; 
+then 
+sed -i "15c\ " sys.conf/variables.conf
+fi
+}
+
+function new_proxy {
+while true; do
+read -p "Proxy IP (18.19.45.78) > " remote_ip
+if ! [ -z $remote_ip ];
+then
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Proxy port (1080) > " remote_port
+if ! [ -z $remote_port ];
+then
+clear
+break
+else
+clear
+continue
+fi
+done
+read -p "Proxy with login:pass? (y/n) > " proxy_logpass
+clear
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]];
+then
+while true; do
+read -p "Proxy login (user) > " login
+if ! [ -z $login ];
+then
+clear
+break
+else
+clear
+continue
+fi
+done
+while true; do
+read -p "Proxy pass (pass) > " pass
+if ! [ -z $pass ];
+then
+clear
+break
+else
+clear
+continue
+fi
+done
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then
+echo " "
+fi
+clear
+read -p "Save Proxy (y/n) > " proxy_save
+clear
+if [[ ! $proxy_save =~ ^[Nn]$ ]]; 
+then read -p "Proxy name (prox0) > " proxy_name
+if ! [ -z $proxy_name ];
+then
+touch proxy/$proxy_name
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]]; 
+then
+sed -i "5c\socks5 $remote_ip $remote_port $login $pass" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $proxy_name ALIVE"
+cat <<EOF > proxy/$proxy_name
+$remote_ip
+$remote_port
+$login
+$pass
+$pub_ip
+EOF
+sed -i "1c\\$remote_ip" sys.conf/variables.conf
+sed -i "2c\\$remote_port" sys.conf/variables.conf
+sed -i "3c\\$login" sys.conf/variables.conf
+sed -i "4c\\$pass" sys.conf/variables.conf
+sed -i "5c\\$pub_ip" sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $proxy_name DEAD"
+sed -i "1c\ " sys.conf/variables.conf
+sed -i "2c\ " sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\ " sys.conf/variables.conf
+rm -f proxy/$proxy_name
+sleep 2
+break
+fi
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then
+sed -i "5c\socks4 $remote_ip $remote_port" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $proxy_name ALIVE"
+cat <<EOF > proxy/$proxy_name
+$remote_ip
+$remote_port
+ 
+ 
+$pub_ip
+EOF
+sed -i "1c\\$remote_ip" sys.conf/variables.conf
+sed -i "2c\\$remote_port" sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\\$pub_ip" sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $proxy_name DEAD"
+sed -i "1c\ " sys.conf/variables.conf
+sed -i "2c\ " sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\ " sys.conf/variables.conf
+rm -f proxy/$proxy_name
+sleep 2
+break
+fi
+fi
+else
+touch proxy/$remote_ip
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]]; 
+then
+sed -i "5c\socks5 $remote_ip $remote_port $login $pass" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $remote_ip ALIVE"
+cat <<EOF > proxy/$remote_ip
+$remote_ip
+$remote_port
+$login
+$pass
+$pub_ip
+EOF
+sed -i "1c\\$remote_ip" sys.conf/variables.conf
+sed -i "2c\\$remote_port" sys.conf/variables.conf
+sed -i "3c\\$login" sys.conf/variables.conf
+sed -i "4c\\$pass" sys.conf/variables.conf
+sed -i "5c\\$pub_ip" sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $remote_ip DEAD"
+sed -i "1c\ " sys.conf/variables.conf
+sed -i "2c\ " sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\ " sys.conf/variables.conf
+rm -f proxy/$remote_ip
+sleep 2
+break
+fi
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then
+sed -i "5c\socks4 $remote_ip $remote_port" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $remote_ip ALIVE"
+cat <<EOF > proxy/$remote_ip
+$remote_ip
+$remote_port
+ 
+ 
+$pub_ip
+EOF
+sed -i "1c\\$remote_ip" sys.conf/variables.conf
+sed -i "2c\\$remote_port" sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\\$pub_ip" sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $remote_ip DEAD"
+sed -i "1c\ " sys.conf/variables.conf
+sed -i "2c\ " sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\ " sys.conf/variables.conf
+rm -f proxy/$remote_ip
+sleep 2
+break
+fi
+fi
+fi
+elif [[ ! $proxy_save =~ ^[Yy]$ ]];
+then
+if [[ ! $proxy_logpass =~ ^[Nn]$ ]]; 
+then
+sed -i "5c\socks5 $remote_ip $remote_port $login $pass" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $remote_ip ALIVE"
+sed -i "1c\\$remote_ip" sys.conf/variables.conf
+sed -i "2c\\$remote_port" sys.conf/variables.conf
+sed -i "3c\\$login" sys.conf/variables.conf
+sed -i "4c\\$pass" sys.conf/variables.conf
+sed -i "5c\\$pub_ip" sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $remote_ip DEAD"
+sed -i "1c\ " sys.conf/variables.conf
+sed -i "2c\ " sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\ " sys.conf/variables.conf
+sleep 2
+break
+fi
+elif [[ ! $proxy_logpass =~ ^[Yy]$ ]]; 
+then
+sed -i "5c\socks4 $remote_ip $remote_port" sys.conf/proxy.conf
+pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+if ! [ -z $pub_ip ]
+then
+clear
+echo "Proxy $remote_ip ALIVE"
+sed -i "1c\\$remote_ip" sys.conf/variables.conf
+sed -i "2c\\$remote_port" sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\\$pub_ip" sys.conf/variables.conf
+sleep 2
+else
+clear
+echo "Proxy $remote_ip DEAD"
+sed -i "1c\ " sys.conf/variables.conf
+sed -i "2c\ " sys.conf/variables.conf
+sed -i "3c\ " sys.conf/variables.conf
+sed -i "4c\ " sys.conf/variables.conf
+sed -i "5c\ " sys.conf/variables.conf
+sleep 2
+break
+fi
+fi
+fi
+}
+
+function remove_proxy {
+num_prox=$(ls -ltr proxy|awk '{print$9}'|wc -l)
+ls -ltr proxy|awk '{print$9}'|cat > /tmp/prox_list
+sed -i 's/.*Proxy succesfully set.*/ /' proxy_list
+for (( m=2; m <= $num_prox; m++ )); do
+    cur_proxy=$(cat /tmp/prox_list|awk "(NR == $m)")
+    remote_ip=$(sed '1!d' proxy/$cur_proxy)
+    remote_port=$(sed '2!d' proxy/$cur_proxy)
+    login=$(sed '3!d' proxy/$cur_proxy)
+    pass=$(sed '4!d' proxy/$cur_proxy)
+    if ! [ -z $login ]
+    then
+    sed -i "5c\socks5 $remote_ip $remote_port $login $pass" sys.conf/proxy.conf
+    else
+    sed -i "5c\socks4 $remote_ip $remote_port" sys.conf/proxy.conf
+    fi
+    pub_ip=$(proxychains4 -f sys.conf/proxy.conf curl ident.me)
+    if ! [ -z $pub_ip ]
+    then
+    clear
+    echo "Proxy $cur_proxy ALIVE"
+    sed -i "5c\\$pub_ip" proxy/$cur_proxy
+    else
+    clear
+    echo "Proxy $cur_proxy DEAD"
+    rm -f proxy/$cur_proxy
+    fi
+done
+rm -f /tmp/prox_list
+}
+
+function opt_menu {
+echo -en "$RED                 PROXY2TUN \n"
+echo -en "${RED}1) Fix SUDO passwordless \n"
+echo -en "${RED}2) Install dependency \n"
+echo -en "${RED}3) Configure all \n"
+echo -en "${RED}4) Configure Wi-Fi \n"
+echo -en "${RED}5) New Proxy \n"
+echo -en "${RED}6) Remove DEAD Proxy \n"
+echo -en "${RED}7) Erase Proxy List \n"
+echo -en "${RED}$(( ${#options[@]}+1 ))) Go Back \n"
+}
+
+title="$RED                  SETTINGS\n"
 prompt=
-options=("Fix SUDO passwordless" "Install dependency" "Configure all" "Configure only Wi-Fi" "Configure only Proxy")
-
+options=("Fix SUDO passwordless" "Install dependency" "Configure all" "Configure Wi-Fi" "New Proxy" "Remove DEAD Proxy" "Erase Proxy List")
 clear
 echo -e -n  "$title"
 PS3="$prompt "
 select opt in "${options[@]}" "Go Back"; do 
-
     case "$REPLY" in
-
-	1 ) clear
-		echo -e -n "$BLUE Fix SUDO passwordless \n"
-		./fix_sudo 
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
+    1 ) clear
+        echo -e -n "$BLUE Fix SUDO passwordless \n"
+        fix_sudo 
+        clear
+        opt_menu;continue;;
     2 ) clear
-		echo -e -n "$BLUE Installing dependency \n"
-		./dependency_installer 
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
+        echo -e -n "$BLUE Installing dependency \n"
+        install_dependency 
+        clear
+        opt_menu;continue;;
     3 ) clear
-		echo -e -n "$BLUE Configure all \n"
-		./configure_all 
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
+        echo -e -n "$BLUE Configure all \n"
+        configure_all 
+        clear
+        opt_menu;continue;;
     4 ) clear
-		echo -e -n "$BLUE Configure only Wi-Fi \n"
-		./configure_wifi 
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";continue;;
+        echo -e -n "$BLUE Configure Wi-Fi \n"
+        configure_wifi 
+        clear
+        opt_menu;continue;;
     5 ) clear
-		echo -e -n "$BLUE Configure only Proxy \n"
-		./configure_proxy
-		clear
-		echo -e -n  "$RED Press ENTER to continue \n";;
-
+        echo -e -n "$BLUE Configure Proxy \n"
+        new_proxy
+        clear
+        opt_menu;continue;;
+    6 ) clear
+        remove_proxy
+        clear
+        echo -e -n "$BLUE DEAD Proxy Removed \n"
+        sleep 2
+        clear
+        opt_menu;continue;;
+    7 ) clear
+        sed -i 's/.*Proxy succesfully set.*/ /' proxy_list
+        rm -rf proxy/*
+        echo -e -n "$BLUE Proxy List Erased \n"
+        sleep 2
+        clear
+        opt_menu;continue;;
     $(( ${#options[@]}+1 )) ) clear; break;;
     *) echo -e -n  "$RED Invalid option. Try another one. \n";continue;;
-
     esac
-
 done
+echo -e $RESETCOLOR
